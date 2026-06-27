@@ -22,6 +22,7 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/api/meta"
 	sptest "k8s.io/apimachinery/pkg/util/strategicpatch/testing"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
@@ -77,6 +78,17 @@ func TestExplainInvalidArgs(t *testing.T) {
 	err = opts.Validate()
 	if err.Error() != "We accept only this format: explain RESOURCE\n" {
 		t.Error("unexpected non-error")
+	}
+}
+
+func TestExplainCommandRegistersCompletion(t *testing.T) {
+	tf := cmdtesting.NewTestFactory()
+	defer tf.Cleanup()
+
+	ioStreams := genericiooptions.NewTestIOStreamsDiscard()
+	cmd := explain.NewCmdExplain("kubectl", tf, ioStreams)
+	if cmd.ValidArgsFunction == nil {
+		t.Fatal("expected explain command to have ValidArgsFunction set")
 	}
 }
 
@@ -273,6 +285,100 @@ func runExplainTestCases(t *testing.T, cases []explainTestCase) {
 		})
 
 		buf.Reset()
+	}
+}
+
+func TestExplainFieldCompletion(t *testing.T) {
+	tf := cmdtesting.NewTestFactory()
+	defer tf.Cleanup()
+	tf.OpenAPISchemaFunc = FakeOpenAPISchema.OpenAPISchemaFn
+
+	cmd := explain.NewCmdExplain("kubectl", tf, genericiooptions.NewTestIOStreamsDiscard())
+
+	noSpace := cobra.ShellCompDirectiveNoFileComp | cobra.ShellCompDirectiveNoSpace
+
+	cases := []struct {
+		toComplete    string
+		mustContain   string   // one completion that must be present
+		exactResults  []string // if set, the full result must equal this
+		wantDirective cobra.ShellCompDirective
+	}{
+		{
+			toComplete:    "pods.",
+			mustContain:   "pods.spec.",
+			wantDirective: noSpace,
+		},
+		{
+			toComplete:    "pods.spec.",
+			mustContain:   "pods.spec.containers.",
+			wantDirective: noSpace,
+		},
+		{
+			toComplete:   "pods.spec.con",
+			exactResults: []string{"pods.spec.containers."},
+			wantDirective: noSpace,
+		},
+		{
+			// Array field: containers is []Container, so its sub-fields should be offered.
+			toComplete:    "pods.spec.containers.",
+			mustContain:   "pods.spec.containers.image",
+			wantDirective: noSpace,
+		},
+		{
+			toComplete:    "pods.sp",
+			mustContain:   "pods.spec.",
+			wantDirective: noSpace,
+		},
+		{
+			// Leaf (string) field must appear without a trailing dot, and the shell
+			// must insert a space after selection (no NoSpace directive for leaf-only results).
+			toComplete:    "pods.metadata.na",
+			mustContain:   "pods.metadata.name",
+			wantDirective: cobra.ShellCompDirectiveNoFileComp,
+		},
+		{
+			// After selecting a leaf field the completion must return nothing.
+			toComplete:    "pods.metadata.name.",
+			exactResults:  []string{},
+			wantDirective: cobra.ShellCompDirectiveNoFileComp,
+		},
+	}
+
+	// Second argument should always return nothing.
+	comps, directive := cmd.ValidArgsFunction(cmd, []string{"pods"}, "pods.sp")
+	if len(comps) != 0 || directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Errorf("expected no completions for second arg, got %v (%v)", comps, directive)
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.toComplete, func(t *testing.T) {
+			comps, directive := cmd.ValidArgsFunction(cmd, []string{}, tc.toComplete)
+			if directive != tc.wantDirective {
+				t.Errorf("directive: got %v, want %v", directive, tc.wantDirective)
+			}
+			if tc.exactResults != nil {
+				if len(comps) != len(tc.exactResults) {
+					t.Fatalf("completions: got %v, want %v", comps, tc.exactResults)
+				}
+				for i, want := range tc.exactResults {
+					if comps[i] != want {
+						t.Errorf("completion[%d]: got %q, want %q", i, comps[i], want)
+					}
+				}
+			}
+			if tc.mustContain != "" {
+				found := false
+				for _, c := range comps {
+					if c == tc.mustContain {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected %q in completions, got %v", tc.mustContain, comps)
+				}
+			}
+		})
 	}
 }
 
