@@ -57,6 +57,7 @@ func NewCmdConfig(restClientGetter genericclioptions.RESTClientGetter, pathOptio
 
 	// TODO(juanvallejo): update all subcommands to work with genericiooptions.IOStreams
 	cmd.AddCommand(NewCmdConfigView(streams, pathOptions))
+	cmd.AddCommand(NewCmdConfigMerge(streams, pathOptions))
 	cmd.AddCommand(NewCmdConfigSetCluster(streams.Out, pathOptions))
 	cmd.AddCommand(NewCmdConfigSetCredentials(streams.Out, pathOptions))
 	cmd.AddCommand(NewCmdConfigSetContext(restClientGetter, streams.Out, pathOptions))
